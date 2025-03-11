@@ -16,7 +16,7 @@
 1. 确保已安装 Python 3.8 或更高版本
 2. 克隆仓库：
    ```bash
-   git clone https://github.com/yourusername/StreamHarvester.git
+   git clone https://github.com/atlasz/StreamHarvester.git
    cd StreamHarvester
    ```
 3. 安装依赖：
@@ -48,6 +48,25 @@
 5. 选择要下载的单集
 6. 点击"下载选中"
 
+## 打包说明
+
+如果您想将程序打包成可执行文件（.exe），请按以下步骤操作：
+
+1. 确保已安装所有依赖：
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. 运行打包脚本：
+   ```bash
+   python build.py
+   ```
+
+3. 打包完成后，可在 `dist` 目录下找到 `StreamHarvester.exe`
+   - 这是一个独立的可执行文件，可以直接运行
+   - 无需安装 Python 或其他依赖
+   - 支持在 Windows 系统上直接双击运行
+
 ## 注意事项
 
 - 使用 Cookie 功能时，请确保已在浏览器中登录目标网站
@@ -66,6 +85,7 @@
 - selenium==4.18.1
 - webdriver-manager==4.0.1
 - lxml>=5.1.0
+- pyinstaller>=6.5.0
 
 ## 许可证
 
