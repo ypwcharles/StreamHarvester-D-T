@@ -28,6 +28,8 @@
 
 ### 视频下载
 
+![视频下载界面](assets/v.png)
+
 1. 运行程序：
    ```bash
    python main.py
@@ -40,6 +42,8 @@
    - 点击"下载选中"
 
 ### 播客下载
+
+![播客下载界面](assets/b.png)
 
 1. 切换到"播客下载"标签页
 2. 输入 Apple Podcast 链接（例如：`https://podcasts.apple.com/cn/podcast/xxx`）
