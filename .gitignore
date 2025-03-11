@@ -24,12 +24,43 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
+.env
+.venv
+env.bak/
+venv.bak/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+.project
+.pydevproject
+.settings/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+logs/
+
+# Local development
+.DS_Store
+Thumbs.db
+*.db
+*.sqlite3
+
+# Cookie files
+*.txt
+!requirements.txt
+
+# Temp files
+temp/
+tmp/
+*.tmp
 
 # Project specific
 temp_cookies.txt
