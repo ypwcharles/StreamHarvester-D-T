@@ -1,0 +1,7 @@
+yt-dlp>=2024.3.10
+customtkinter>=5.2.2
+pillow>=10.2.0
+urllib3>=1.26.17,<3.0.0
+browser-cookie3>=0.19.1
+selenium==4.18.1
+webdriver-manager==4.0.1 
