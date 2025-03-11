@@ -1,72 +1,71 @@
-# StreamHarvester - 视频下载工具
+# StreamHarvester
 
-一个支持多平台视频下载的图形界面工具，基于 yt-dlp 开发。
+一个功能强大的视频和播客下载工具，支持多个平台。
 
 ## 功能特点
 
-- 支持多个视频平台的视频下载
-- 支持多浏览器 Cookie 导入（Chrome、Firefox、Edge、Opera、Brave）
-- 支持自定义视频质量和格式选择
-- 支持下载进度显示
-- 支持视频和音频分离下载
+- 支持多个视频平台（YouTube、Bilibili等）
+- 支持播客下载（Apple Podcasts）
+- 自动获取登录状态（Cookie）
+- 支持选择视频质量
+- 支持批量下载
+- 现代化的图形界面
 
-## 系统要求
+## 安装说明
 
-- Python 3.8 或更高版本
-- Windows/Linux/MacOS
-
-## 安装
-
-1. 克隆仓库：
-```bash
-git clone https://github.com/yourusername/StreamHarvester.git
-cd StreamHarvester
-```
-
-2. 安装依赖：
-```bash
-pip install -r requirements.txt
-```
+1. 确保已安装 Python 3.8 或更高版本
+2. 克隆仓库：
+   ```bash
+   git clone https://github.com/yourusername/StreamHarvester.git
+   cd StreamHarvester
+   ```
+3. 安装依赖：
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## 使用说明
 
+### 视频下载
+
 1. 运行程序：
-```bash
-python main.py
-```
-
-2. 基本使用流程：
-   - 输入要下载的视频链接
-   - 选择是否使用浏览器 Cookie（如需要登录的视频）
-   - 选择下载目录
-   - 选择下载质量（最佳质量/最佳视频/最佳音频/自定义格式）
+   ```bash
+   python main.py
+   ```
+2. 在"视频下载"标签页中：
+   - 输入视频链接
+   - 选择是否使用 Cookie（如果需要登录）
    - 点击"获取可用格式"
-   - 如选择自定义格式，在列表中选择需要的视频和音频格式
-   - 点击"开始下载"
+   - 选择需要的视频质量
+   - 点击"下载选中"
 
-3. Cookie 使用说明：
-   - 如需下载需要登录的视频，请先在对应浏览器中登录网站
-   - 在程序中选择对应的浏览器
-   - 程序会自动获取浏览器中的 Cookie
+### 播客下载
 
-4. 格式选择说明：
-   - 最佳质量：自动选择最佳视频和音频质量并合并
-   - 最佳视频：仅下载最高质量视频流
-   - 最佳音频：仅下载最高质量音频流
-   - 自定义格式：手动选择视频和音频格式
+1. 切换到"播客下载"标签页
+2. 输入 Apple Podcast 链接（例如：`https://podcasts.apple.com/cn/podcast/xxx`）
+3. 选择下载目录
+4. 点击"获取播客列表"
+5. 选择要下载的单集
+6. 点击"下载选中"
 
 ## 注意事项
 
-- 下载需要登录的视频时，请确保已在选择的浏览器中登录相应网站
-- 某些视频可能因为地区限制或版权问题无法下载
-- 下载速度受网络条件和服务器限制影响
+- 使用 Cookie 功能时，请确保已在浏览器中登录目标网站
+- 下载的视频和播客文件会保存在选择的目录中
+- 支持批量下载，可以一次选择多个视频或播客单集
 
 ## 依赖项
 
-- customtkinter
-- yt-dlp
-- browser-cookie3
-- Pillow
+- yt-dlp>=2024.3.10
+- customtkinter>=5.2.2
+- pillow>=10.2.0
+- urllib3>=1.26.17,<3.0.0
+- browser-cookie3>=0.19.1
+- beautifulsoup4>=4.12.0
+- requests>=2.31.0
+- selenium==4.18.1
+- webdriver-manager==4.0.1
+- lxml>=5.1.0
 
 ## 许可证
 

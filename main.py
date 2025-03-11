@@ -11,6 +11,7 @@ import browser_cookie3
 import time
 import logging
 import traceback
+from podcast_downloader import PodcastDownloader
 
 # 配置日志
 logging.basicConfig(
@@ -34,8 +35,27 @@ class VideoDownloader(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
+        # 创建标签页控件
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
+        
+        # 添加视频下载标签页
+        self.video_tab = self.tabview.add("视频下载")
+        self.video_tab.grid_columnconfigure(0, weight=1)
+        
+        # 添加播客下载标签页
+        self.podcast_tab = self.tabview.add("播客下载")
+        self.podcast_tab.grid_columnconfigure(0, weight=1)
+        
+        # 创建视频下载界面
+        self.create_video_tab()
+        
+        # 创建播客下载界面
+        self.create_podcast_tab()
+
+    def create_video_tab(self):
         # 创建主框架
-        self.main_frame = ctk.CTkFrame(self)
+        self.main_frame = ctk.CTkFrame(self.video_tab)
         self.main_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
 
@@ -71,7 +91,7 @@ class VideoDownloader(ctk.CTk):
         self.cookie_status = ctk.CTkLabel(self.cookie_frame, text="")
         self.cookie_status.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
 
-        self.cookie_file_path = None  # 存储临时cookie文件路径
+        self.cookie_file_path = None
 
         # 下载目录选择
         self.dir_frame = ctk.CTkFrame(self.main_frame)
@@ -414,6 +434,11 @@ class VideoDownloader(ctk.CTk):
                 os.remove(self.cookie_file_path)
             except:
                 pass
+
+    def create_podcast_tab(self):
+        # 创建播客下载器实例
+        self.podcast_downloader = PodcastDownloader(self.podcast_tab)
+        self.podcast_downloader.grid(row=0, column=0, sticky="nsew")
 
 if __name__ == "__main__":
     app = VideoDownloader()
