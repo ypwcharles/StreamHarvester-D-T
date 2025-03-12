@@ -11,6 +11,7 @@ from threading import Thread
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
+import time
 
 class PodcastDownloader(ctk.CTkFrame):
     def __init__(self, parent):
@@ -49,6 +50,17 @@ class PodcastDownloader(ctk.CTkFrame):
         
         self.dir_frame.grid_columnconfigure(1, weight=1)
         
+        # 选项框架
+        self.options_frame = ctk.CTkFrame(self.main_frame)
+        self.options_frame.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
+        
+        # 倒序选项
+        self.reverse_order_var = ctk.BooleanVar(value=False)
+        self.reverse_order_checkbox = ctk.CTkCheckBox(self.options_frame, text="曲目序号倒序", 
+                                                     variable=self.reverse_order_var,
+                                                     command=self.refresh_track_numbers)
+        self.reverse_order_checkbox.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        
         # 播客列表框架
         self.list_frame = ctk.CTkFrame(self)
         self.list_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
@@ -56,10 +68,18 @@ class PodcastDownloader(ctk.CTkFrame):
         self.list_frame.grid_rowconfigure(0, weight=1)
         
         # 创建表格
-        self.tree = ttk.Treeview(self.list_frame, columns=("标题", "时长", "发布日期"), show="headings")
+        self.tree = ttk.Treeview(self.list_frame, columns=("曲目号", "标题", "时长", "发布日期"), show="headings")
+        self.tree.heading("曲目号", text="曲目号")
         self.tree.heading("标题", text="标题")
         self.tree.heading("时长", text="时长")
         self.tree.heading("发布日期", text="发布日期")
+        
+        # 设置列宽
+        self.tree.column("曲目号", width=80, anchor="center")
+        self.tree.column("标题", width=300)
+        self.tree.column("时长", width=80, anchor="center")
+        self.tree.column("发布日期", width=100, anchor="center")
+        
         self.tree.grid(row=0, column=0, sticky="nsew")
         
         # 添加滚动条
@@ -97,6 +117,9 @@ class PodcastDownloader(ctk.CTkFrame):
         self.status_label.grid(row=4, column=0, padx=20, pady=10)
         
         self.podcast_items = []
+        self.original_podcast_items = []  # 存储原始顺序的播客项目
+        self.default_download_dir = os.path.expanduser("~/Downloads/Podcasts")
+        self.podcast_title = ""
         
     def choose_directory(self):
         dir_path = filedialog.askdirectory(initialdir=self.dir_entry.get())
@@ -135,6 +158,16 @@ class PodcastDownloader(ctk.CTkFrame):
             # 解析RSS内容
             items = []
             soup = BeautifulSoup(response.content, 'xml')
+            
+            # 获取播客标题（唱片集名称）
+            channel = soup.find('channel')
+            self.podcast_title = channel.title.text if channel and channel.title else "未知播客"
+            
+            # 如果使用默认下载路径，则自动添加唱片集文件夹
+            if self.dir_entry.get() == self.default_download_dir:
+                new_dir = os.path.join(self.default_download_dir, self.podcast_title)
+                self.dir_entry.delete(0, tk.END)
+                self.dir_entry.insert(0, new_dir)
             
             for item in soup.find_all('item'):
                 title = item.title.text if item.title else "未知标题"
@@ -222,22 +255,22 @@ class PodcastDownloader(ctk.CTkFrame):
                     self.tree.delete(item)
                 self.podcast_items = []
                 
-                # 添加播客条目
+                # 存储原始播客项目（未排序）
+                self.original_podcast_items = []
                 for item in podcast_items:
                     title = item['title']
                     duration_str = self.format_duration(item['duration'])
                     upload_date = self.format_date(item['upload_date'])
                     
-                    self.podcast_items.append({
+                    self.original_podcast_items.append({
                         'title': title,
                         'url': item['url'],
                         'duration': duration_str,
                         'upload_date': upload_date
                     })
-                    
-                    self.tree.insert("", "end", values=(title, duration_str, upload_date))
-                    
-                self.status_label.configure(text=f"成功获取 {len(self.podcast_items)} 个播客")
+                
+                # 根据当前复选框状态决定是否倒序
+                self.refresh_track_numbers()
                 
             except Exception as e:
                 error_msg = f"获取播客列表失败: {str(e)}"
@@ -259,29 +292,70 @@ class PodcastDownloader(ctk.CTkFrame):
                 
             try:
                 self.download_button.configure(state="disabled")
-                total = len(selected_items)
+                total_selected = len(selected_items)
                 completed = 0
+                failed = 0
+                
+                # 确保下载目录存在
+                download_dir = self.dir_entry.get()
+                os.makedirs(download_dir, exist_ok=True)
+                
+                # 计算曲目号需要的位数，使用整个播客列表的长度
+                total_episodes = len(self.podcast_items)
+                digits = len(str(total_episodes))
                 
                 for item in selected_items:
                     index = self.tree.index(item)
                     podcast = self.podcast_items[index]
                     
-                    self.status_label.configure(text=f"正在下载: {podcast['title']}")
+                    # 直接使用显示的曲目号的第一部分（不包含"/"）作为文件名的曲目号
+                    display_track_number = podcast['track_number']
+                    file_track_number = display_track_number.split('/')[0]
                     
+                    # 格式化文件名为"曲目号.曲目标题"
+                    formatted_title = f"{file_track_number}.{podcast['title']}"
+                    
+                    self.status_label.configure(text=f"正在下载: {formatted_title}")
+                    
+                    # 配置yt-dlp选项，增加重试次数和超时时间
                     ydl_opts = {
-                        'outtmpl': os.path.join(self.dir_entry.get(), '%(title)s.%(ext)s'),
+                        'outtmpl': os.path.join(download_dir, formatted_title + '.%(ext)s'),
                         'quiet': True,
+                        'retries': 10,                      # 增加重试次数
+                        'fragment_retries': 10,             # 增加片段重试次数
+                        'skip_unavailable_fragments': True, # 跳过不可用片段
+                        'socket_timeout': 60,               # 增加套接字超时时间
+                        'extractor_retries': 5,             # 增加提取器重试次数
                     }
                     
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([podcast['url']])
-                        
+                    # 尝试下载，最多重试3次
+                    max_attempts = 3
+                    for attempt in range(max_attempts):
+                        try:
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                ydl.download([podcast['url']])
+                            break  # 下载成功，跳出重试循环
+                        except Exception as e:
+                            self.logger.warning(f"下载尝试 {attempt+1}/{max_attempts} 失败: {str(e)}")
+                            if attempt == max_attempts - 1:  # 最后一次尝试
+                                self.logger.error(f"下载失败: {str(e)}")
+                                failed += 1
+                                messagebox.showwarning("警告", f"无法下载 '{formatted_title}': {str(e)}\n将继续下载其他文件。")
+                            else:
+                                # 等待一段时间后重试
+                                self.status_label.configure(text=f"重试下载 {formatted_title}... ({attempt+2}/{max_attempts})")
+                                time.sleep(3)  # 等待3秒后重试
+                    
                     completed += 1
-                    progress = completed / total
+                    progress = completed / total_selected
                     self.progress_bar.set(progress)
                     
-                self.status_label.configure(text="下载完成！")
-                messagebox.showinfo("成功", f"成功下载 {completed} 个播客")
+                if failed > 0:
+                    self.status_label.configure(text=f"下载完成，但有 {failed} 个文件失败")
+                    messagebox.showinfo("部分成功", f"成功下载 {completed - failed} 个播客，{failed} 个失败")
+                else:
+                    self.status_label.configure(text="下载完成！")
+                    messagebox.showinfo("成功", f"成功下载 {completed} 个播客")
                 
             except Exception as e:
                 error_msg = f"下载失败: {str(e)}"
@@ -300,4 +374,54 @@ class PodcastDownloader(ctk.CTkFrame):
             
     def deselect_all(self):
         for item in self.tree.get_children():
-            self.tree.selection_remove(item) 
+            self.tree.selection_remove(item)
+            
+    def refresh_track_numbers(self):
+        """根据当前倒序选项刷新列表中的曲目号"""
+        if not self.original_podcast_items:
+            return  # 如果没有原始播客项目，不执行任何操作
+            
+        # 保存当前选中的项目
+        selected_indices = [self.tree.index(item) for item in self.tree.selection()]
+            
+        # 清空现有列表
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.podcast_items = []
+        
+        # 根据当前复选框状态决定是否倒序
+        reverse_order = self.reverse_order_var.get()
+        
+        # 创建新的排序列表（基于原始顺序）
+        sorted_items = list(self.original_podcast_items)
+        if reverse_order:
+            sorted_items.reverse()
+            
+        # 重新添加播客条目
+        total_episodes = len(sorted_items)
+        digits = len(str(total_episodes))  # 计算需要的位数
+        total_str = str(total_episodes).zfill(digits)  # 格式化总数
+        
+        for index, item in enumerate(sorted_items):
+            title = item['title']
+            duration_str = item['duration']
+            upload_date = item['upload_date']
+            # 使用零填充格式化曲目号
+            track_number = f"{str(index + 1).zfill(digits)}/{total_str}"
+            
+            self.podcast_items.append({
+                'title': title,
+                'url': item['url'],
+                'duration': duration_str,
+                'upload_date': upload_date,
+                'track_number': track_number
+            })
+            
+            self.tree.insert("", "end", values=(track_number, title, duration_str, upload_date))
+        
+        # 恢复选中状态
+        for idx in selected_indices:
+            if idx < len(self.tree.get_children()):  # 确保索引有效
+                self.tree.selection_add(self.tree.get_children()[idx])
+            
+        self.status_label.configure(text=f"曲目顺序已{'倒序' if reverse_order else '正序'}排列") 
