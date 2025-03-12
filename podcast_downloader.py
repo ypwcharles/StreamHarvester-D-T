@@ -34,6 +34,9 @@ class PodcastDownloader(ctk.CTkFrame):
         self.url_entry = ctk.CTkEntry(self.main_frame, width=400)
         self.url_entry.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="ew")
         
+        # 设置默认下载目录
+        self.default_download_dir = os.path.expanduser("~/Downloads/Podcasts").strip()
+        
         # 下载目录选择
         self.dir_frame = ctk.CTkFrame(self.main_frame)
         self.dir_frame.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
@@ -43,7 +46,7 @@ class PodcastDownloader(ctk.CTkFrame):
         
         self.dir_entry = ctk.CTkEntry(self.dir_frame, width=300)
         self.dir_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        self.dir_entry.insert(0, os.path.expanduser("~/Downloads/Podcasts"))
+        self.dir_entry.insert(0, self.default_download_dir)
         
         self.dir_button = ctk.CTkButton(self.dir_frame, text="选择目录", command=self.choose_directory)
         self.dir_button.grid(row=0, column=2, padx=5, pady=5)
@@ -118,12 +121,13 @@ class PodcastDownloader(ctk.CTkFrame):
         
         self.podcast_items = []
         self.original_podcast_items = []  # 存储原始顺序的播客项目
-        self.default_download_dir = os.path.expanduser("~/Downloads/Podcasts")
         self.podcast_title = ""
         
     def choose_directory(self):
-        dir_path = filedialog.askdirectory(initialdir=self.dir_entry.get())
+        dir_path = filedialog.askdirectory(initialdir=self.dir_entry.get().strip())
         if dir_path:
+            # 确保路径有效
+            dir_path = dir_path.strip()
             self.dir_entry.delete(0, tk.END)
             self.dir_entry.insert(0, dir_path)
             
@@ -162,12 +166,6 @@ class PodcastDownloader(ctk.CTkFrame):
             # 获取播客标题（唱片集名称）
             channel = soup.find('channel')
             self.podcast_title = channel.title.text if channel and channel.title else "未知播客"
-            
-            # 如果使用默认下载路径，则自动添加唱片集文件夹
-            if self.dir_entry.get() == self.default_download_dir:
-                new_dir = os.path.join(self.default_download_dir, self.podcast_title)
-                self.dir_entry.delete(0, tk.END)
-                self.dir_entry.insert(0, new_dir)
             
             for item in soup.find_all('item'):
                 title = item.title.text if item.title else "未知标题"
@@ -233,12 +231,16 @@ class PodcastDownloader(ctk.CTkFrame):
             
     def fetch_podcast_list(self):
         def fetch():
-            url = self.url_entry.get()
+            url = self.url_entry.get().strip()
             if not url:
                 messagebox.showerror("错误", "请输入播客链接")
                 return
                 
             try:
+                # 重置下载目录为默认值
+                self.dir_entry.delete(0, tk.END)
+                self.dir_entry.insert(0, self.default_download_dir)
+                
                 self.status_label.configure(text="正在获取播客列表...")
                 self.fetch_button.configure(state="disabled")
                 
@@ -247,6 +249,14 @@ class PodcastDownloader(ctk.CTkFrame):
                     feed_url = self.get_rss_feed(url)
                     self.logger.info(f"获取到 RSS feed URL: {feed_url}")
                     podcast_items = self.parse_rss_feed(feed_url)
+                    
+                    # 获取播客标题后，更新下载目录
+                    if self.podcast_title:
+                        # 清理播客标题，移除不允许作为文件夹名的字符
+                        safe_title = self.podcast_title.replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_')
+                        new_dir = os.path.join(self.default_download_dir, safe_title)
+                        self.dir_entry.delete(0, tk.END)
+                        self.dir_entry.insert(0, new_dir)
                 else:
                     raise Exception("目前仅支持 Apple Podcast 链接")
                 
@@ -296,8 +306,16 @@ class PodcastDownloader(ctk.CTkFrame):
                 completed = 0
                 failed = 0
                 
-                # 确保下载目录存在
-                download_dir = self.dir_entry.get()
+                # 确保下载目录存在，并清理路径中的空白字符和换行符
+                download_dir = self.dir_entry.get().strip()
+                
+                # 检查路径是否有效
+                if not download_dir or '\n' in download_dir:
+                    self.logger.error(f"无效的下载路径: {download_dir}")
+                    messagebox.showerror("错误", "下载路径无效，请重新选择下载目录")
+                    self.download_button.configure(state="normal")
+                    return
+                
                 os.makedirs(download_dir, exist_ok=True)
                 
                 # 计算曲目号需要的位数，使用整个播客列表的长度
