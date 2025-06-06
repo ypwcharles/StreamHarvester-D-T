@@ -291,7 +291,7 @@ class PodcastDownloader(ctk.CTkFrame):
             finally:
                 self.fetch_button.configure(state="normal")
                 
-        Thread(target=fetch).start()
+        Thread(target=fetch, daemon=True).start()
         
     def download_selected(self):
         def download():
@@ -384,7 +384,7 @@ class PodcastDownloader(ctk.CTkFrame):
             finally:
                 self.download_button.configure(state="normal")
                 
-        Thread(target=download).start()
+        Thread(target=download, daemon=True).start()
         
     def select_all(self):
         for item in self.tree.get_children():

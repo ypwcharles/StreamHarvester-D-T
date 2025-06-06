@@ -358,7 +358,7 @@ class VideoDownloader(ctk.CTk):
                 messagebox.showerror("错误", error_msg)
                 self.status_label.configure(text="获取格式失败")
 
-        Thread(target=fetch).start()
+        Thread(target=fetch, daemon=True).start()
 
     def start_download(self):
         def download():
@@ -414,7 +414,7 @@ class VideoDownloader(ctk.CTk):
                 messagebox.showerror("错误", error_msg)
                 self.status_label.configure(text="下载失败")
 
-        Thread(target=download).start()
+        Thread(target=download, daemon=True).start()
 
     def progress_hook(self, d):
         if d['status'] == 'downloading':
