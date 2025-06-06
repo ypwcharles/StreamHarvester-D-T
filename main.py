@@ -259,17 +259,21 @@ class VideoDownloader(ctk.CTk):
                     
                     # 写入cookies
                     for cookie in cj:
-                        # 确保domain不以点开头
-                        cookie_domain = cookie.domain.lstrip('.')
-                        # 确保path不为空
+                        # cookie.domain 包含域名，可能以点开头表示适用于子域名
+                        cookie_domain = cookie.domain
+                        # 根据是否以点开头确定 subdomain 标志
+                        domain_flag = 'TRUE' if cookie_domain.startswith('.') else 'FALSE'
+                        # path 可能为空，使用根路径代替
                         cookie_path = cookie.path if cookie.path else '/'
-                        # 转换secure标志
+                        # secure 标志转换
                         secure = 'TRUE' if cookie.secure else 'FALSE'
-                        # 处理过期时间
+                        # 处理过期时间，不存在时设置为一小时后
                         expires = str(int(cookie.expires)) if cookie.expires else str(int(time.time() + 3600))
-                        
+
                         # 写入cookie行
-                        f.write(f"{cookie_domain}\tTRUE\t{cookie_path}\t{secure}\t{expires}\t{cookie.name}\t{cookie.value}\n")
+                        f.write(
+                            f"{cookie_domain}\t{domain_flag}\t{cookie_path}\t{secure}\t{expires}\t{cookie.name}\t{cookie.value}\n"
+                        )
                 
                 self.cookie_status.configure(text="Cookie获取成功")
                 return {'cookiefile': cookie_file}
