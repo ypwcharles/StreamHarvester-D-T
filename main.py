@@ -362,7 +362,8 @@ class VideoDownloader(ctk.CTk):
             try:
                 ydl_opts = {
                     'progress_hooks': [self.progress_hook],
-                    'outtmpl': os.path.join(self.dir_entry.get(), '%(title)s.%(ext)s'),
+                    # 在文件名中加入视频分辨率，例如 "title-1080p.mp4"
+                    'outtmpl': os.path.join(self.dir_entry.get(), '%(title)s-%(height)sp.%(ext)s'),
                     # 添加重试和超时设置
                     'retries': 10,  # 重试次数
                     'fragment_retries': 10,  # 片段下载重试次数
