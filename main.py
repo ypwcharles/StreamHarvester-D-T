@@ -9,6 +9,8 @@ from threading import Thread
 from PIL import Image
 import browser_cookie3
 import time
+import urllib.parse
+import http.cookiejar
 import logging
 import traceback
 from podcast_downloader import PodcastDownloader
@@ -227,8 +229,11 @@ class VideoDownloader(ctk.CTk):
                 
                 self.cookie_status.configure(text="正在获取Cookie...")
                 
-                # 从URL中提取域名
-                domain = url.split('/')[2]
+                # 从URL中提取域名，并简化为基础域名以确保获取到顶级域的登录Cookie
+                parsed = urllib.parse.urlparse(url)
+                host = parsed.hostname or ''
+                domain_parts = host.split('.')
+                domain = '.'.join(domain_parts[-2:]) if len(domain_parts) > 2 else host
                 self.logger.info(f"正在从{cookie_mode}获取 {domain} 的cookies")
                 
                 # 创建临时cookie文件
@@ -250,30 +255,11 @@ class VideoDownloader(ctk.CTk):
                 except Exception as e:
                     raise Exception(f"无法从{cookie_mode}获取Cookie: {str(e)}")
                 
-                # 将cookies保存为Netscape格式
-                with open(cookie_file, 'w', encoding='utf-8') as f:
-                    # 写入Netscape格式的头部
-                    f.write("# Netscape HTTP Cookie File\n")
-                    f.write("# https://curl.haxx.se/rfc/cookie_spec.html\n")
-                    f.write("# This is a generated file!  Do not edit.\n\n")
-                    
-                    # 写入cookies
-                    for cookie in cj:
-                        # cookie.domain 包含域名，可能以点开头表示适用于子域名
-                        cookie_domain = cookie.domain
-                        # 根据是否以点开头确定 subdomain 标志
-                        domain_flag = 'TRUE' if cookie_domain.startswith('.') else 'FALSE'
-                        # path 可能为空，使用根路径代替
-                        cookie_path = cookie.path if cookie.path else '/'
-                        # secure 标志转换
-                        secure = 'TRUE' if cookie.secure else 'FALSE'
-                        # 处理过期时间，不存在时设置为一小时后
-                        expires = str(int(cookie.expires)) if cookie.expires else str(int(time.time() + 3600))
-
-                        # 写入cookie行
-                        f.write(
-                            f"{cookie_domain}\t{domain_flag}\t{cookie_path}\t{secure}\t{expires}\t{cookie.name}\t{cookie.value}\n"
-                        )
+                # 使用 MozillaCookieJar 保存为 Netscape 格式，确保字段正确
+                moz_cj = http.cookiejar.MozillaCookieJar(cookie_file)
+                for cookie in cj:
+                    moz_cj.set_cookie(cookie)
+                moz_cj.save(ignore_discard=True, ignore_expires=True)
                 
                 self.cookie_status.configure(text="Cookie获取成功")
                 return {'cookiefile': cookie_file}
