@@ -5,7 +5,7 @@
 ## 功能特点
 
 - 支持多个视频平台（YouTube、Bilibili等）
-- 支持播客下载（Apple Podcasts）
+- 支持播客下载（Apple Podcasts、小宇宙 FM）
 - 自动获取登录状态（Cookie）
 - 支持选择视频质量
 - 支持批量下载
@@ -46,7 +46,7 @@
 ![播客下载界面](assets/b.png)
 
 1. 切换到"播客下载"标签页
-2. 输入 Apple Podcast 链接（例如：`https://podcasts.apple.com/cn/podcast/xxx`）
+2. 输入 Apple Podcast 或小宇宙 FM 链接（例如：`https://podcasts.apple.com/cn/podcast/xxx` 或 `https://www.xiaoyuzhoufm.com/episode/xxxxx`）
 3. 选择下载目录
 4. 点击"获取播客列表"
 5. 选择要下载的单集

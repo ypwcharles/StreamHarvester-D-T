@@ -228,6 +228,130 @@ class PodcastDownloader(ctk.CTkFrame):
             return date_str[:10]  # 如果无法解析，返回前10个字符
         except:
             return ""
+
+    def _find_key(self, obj, key):
+        """递归搜索字典或列表中的指定键"""
+        if isinstance(obj, dict):
+            if key in obj:
+                yield obj[key]
+            for v in obj.values():
+                yield from self._find_key(v, key)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from self._find_key(item, key)
+
+    def parse_xiaoyuzhou_episode(self, episode_url):
+        """解析小宇宙单集页面"""
+        try:
+            resp = requests.get(
+                episode_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            script = soup.find("script", id="__NEXT_DATA__")
+            if not script or not script.string:
+                raise Exception("未找到页面数据")
+
+            data = json.loads(script.string)
+
+            # 从 __NEXT_DATA__ 中递归查找所需字段
+            audio_url = next(self._find_key(data, "audioUrl"), None)
+            if not audio_url:
+                audio_url = next(self._find_key(data, "url"), None)
+            title = next(self._find_key(data, "title"), "未知标题")
+            duration = next(self._find_key(data, "duration"), 0)
+            publish_date = next(
+                self._find_key(data, "publishedAt"),
+                next(self._find_key(data, "publishDate"), ""),
+            )
+
+            podcast_title = next(self._find_key(data, "podcastTitle"), None)
+            if not podcast_title:
+                podcast_title = next(self._find_key(data, "podcast"), {}).get(
+                    "title", "小宇宙播客"
+                )
+            self.podcast_title = podcast_title or "小宇宙播客"
+
+            if not audio_url:
+                raise Exception("未找到音频链接")
+
+            return [
+                {
+                    "title": title,
+                    "url": audio_url,
+                    "duration": duration,
+                    "upload_date": publish_date,
+                }
+            ]
+        except Exception as e:
+            raise Exception(f"解析小宇宙页面失败: {str(e)}")
+
+    def parse_xiaoyuzhou_podcast(self, podcast_url):
+        """解析小宇宙播客主页，尝试获取所有单集"""
+        try:
+            resp = requests.get(
+                podcast_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            script = soup.find("script", id="__NEXT_DATA__")
+            if not script or not script.string:
+                raise Exception("未找到页面数据")
+
+            data = json.loads(script.string)
+            episodes = None
+            for item in self._find_key(data, "episodes"):
+                if isinstance(item, list):
+                    episodes = item
+                    break
+
+            if episodes is None:
+                # 如果未找到列表，则尝试将整个页面作为单集解析
+                return self.parse_xiaoyuzhou_episode(podcast_url)
+
+            podcast_title = next(self._find_key(data, "title"), "小宇宙播客")
+            self.podcast_title = podcast_title
+
+            items = []
+            for ep in episodes:
+                audio_url = None
+                if isinstance(ep, dict):
+                    audio_url = ep.get("audioUrl") or (
+                        ep.get("audio", {}).get("url") if isinstance(ep.get("audio"), dict) else None
+                    )
+                    title = ep.get("title", "未知标题")
+                    duration = ep.get("duration", 0)
+                    upload_date = (
+                        ep.get("publishedAt")
+                        or ep.get("publishDate")
+                        or ep.get("date")
+                        or ""
+                    )
+                else:
+                    continue
+
+                if audio_url:
+                    items.append(
+                        {
+                            "title": title,
+                            "url": audio_url,
+                            "duration": duration,
+                            "upload_date": upload_date,
+                        }
+                    )
+
+            if not items:
+                raise Exception("未找到播客列表")
+
+            return items
+        except Exception as e:
+            raise Exception(f"解析小宇宙播客失败: {str(e)}")
             
     def fetch_podcast_list(self):
         def fetch():
@@ -244,21 +368,53 @@ class PodcastDownloader(ctk.CTkFrame):
                 self.status_label.configure(text="正在获取播客列表...")
                 self.fetch_button.configure(state="disabled")
                 
-                # 如果是 Apple Podcast 链接，获取并解析 RSS feed
+                # Apple Podcast 链接
                 if 'podcasts.apple.com' in url:
                     feed_url = self.get_rss_feed(url)
                     self.logger.info(f"获取到 RSS feed URL: {feed_url}")
                     podcast_items = self.parse_rss_feed(feed_url)
-                    
-                    # 获取播客标题后，更新下载目录
+
                     if self.podcast_title:
-                        # 清理播客标题，移除不允许作为文件夹名的字符
-                        safe_title = self.podcast_title.replace('/', '_').replace('\\', '_').replace(':', '_').replace('*', '_').replace('?', '_').replace('"', '_').replace('<', '_').replace('>', '_').replace('|', '_')
+                        safe_title = (
+                            self.podcast_title.replace('/', '_')
+                            .replace('\\', '_')
+                            .replace(':', '_')
+                            .replace('*', '_')
+                            .replace('?', '_')
+                            .replace('"', '_')
+                            .replace('<', '_')
+                            .replace('>', '_')
+                            .replace('|', '_')
+                        )
                         new_dir = os.path.join(self.default_download_dir, safe_title)
                         self.dir_entry.delete(0, tk.END)
                         self.dir_entry.insert(0, new_dir)
+
+                # 小宇宙 FM 链接
+                elif 'xiaoyuzhoufm.com' in url:
+                    if '/episode/' in url:
+                        podcast_items = self.parse_xiaoyuzhou_episode(url)
+                    else:
+                        podcast_items = self.parse_xiaoyuzhou_podcast(url)
+
+                    if self.podcast_title:
+                        safe_title = (
+                            self.podcast_title.replace('/', '_')
+                            .replace('\\', '_')
+                            .replace(':', '_')
+                            .replace('*', '_')
+                            .replace('?', '_')
+                            .replace('"', '_')
+                            .replace('<', '_')
+                            .replace('>', '_')
+                            .replace('|', '_')
+                        )
+                        new_dir = os.path.join(self.default_download_dir, safe_title)
+                        self.dir_entry.delete(0, tk.END)
+                        self.dir_entry.insert(0, new_dir)
+
                 else:
-                    raise Exception("目前仅支持 Apple Podcast 链接")
+                    raise Exception("目前仅支持 Apple Podcast 或 小宇宙FM 链接")
                 
                 # 清空现有列表
                 for item in self.tree.get_children():
