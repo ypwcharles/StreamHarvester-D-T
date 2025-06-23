@@ -14,35 +14,7 @@ from datetime import datetime
 import time
 import traceback
 import queue
-
-class DownloadThread(Thread):
-    def __init__(self, ydl_opts, urls, queue):
-        super().__init__(daemon=True)
-        self.ydl_opts = ydl_opts
-        self.urls = urls
-        self.queue = queue
-        self.stop_requested = False
-
-    def run(self):
-        try:
-            self.ydl_opts['progress_hooks'] = [self.progress_hook]
-            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-                ydl.download(self.urls)
-            if not self.stop_requested:
-                self.queue.put({'status': 'task_finished'})
-        except Exception as e:
-            if "Download cancelled by user" in str(e):
-                self.queue.put({'status': 'cancelled'})
-            else:
-                self.queue.put({'status': 'error', 'error': str(e)})
-
-    def progress_hook(self, d):
-        if self.stop_requested:
-            raise Exception("Download cancelled by user.")
-        self.queue.put({'status': d['status'], 'data': d})
-
-    def stop(self):
-        self.stop_requested = True
+from concurrent.futures import ThreadPoolExecutor
 
 class PodcastDownloader(ctk.CTkFrame):
     def __init__(self, parent):
@@ -53,6 +25,12 @@ class PodcastDownloader(ctk.CTkFrame):
         self.current_file_progress = 0 # 追踪当前文件的下载进度
         self.download_thread = None
         self.download_queue = queue.Queue()
+        self.download_pool = ThreadPoolExecutor(max_workers=5) # 限制5个并发
+        self.active_downloads = {} # 追踪活跃的下载任务
+        self.total_downloads = 0
+        self.completed_downloads = 0
+        self.file_progress = {} # url -> {percent: float, downloaded_bytes: int, speed: float}
+        self.errors_occurred = False
         
         # 配置网格
         self.grid_columnconfigure(0, weight=1)
@@ -174,6 +152,7 @@ class PodcastDownloader(ctk.CTkFrame):
         self.original_podcast_items = []  # 存储原始顺序的播客项目
         self.podcast_title = ""
         self.item_states = {} # 存储每个项目的选中状态
+        self.download_futures = [] # 存储 future 对象以便中止
         
     def on_tree_click(self, event):
         """处理 Treeview 上的点击事件以切换复选框状态"""
@@ -510,183 +489,244 @@ class PodcastDownloader(ctk.CTkFrame):
         # 清空 treeview
         for i in self.tree.get_children():
             self.tree.delete(i)
-            
-        self.podcast_items = list(self.original_podcast_items) # 复制列表
         
-        # 重置全选状态
-        self.all_selected_var.set(False)
-        self.tree.heading("选择", text="☐")
-
-        total_items = len(self.podcast_items)
-        
-        # 根据复选框状态决定是否倒序
+        # 根据倒序选项决定使用哪个列表
+        podcast_items_to_display = list(self.original_podcast_items)
         if self.reverse_order_var.get():
-            self.podcast_items.reverse()
-            
+            podcast_items_to_display.reverse()
+
+        self.podcast_items = podcast_items_to_display # 更新当前显示的列表
+        
         for i, item in enumerate(self.podcast_items):
-            track_num = total_items - i if self.reverse_order_var.get() else i + 1
-            formatted_date = self.format_date(item.get('upload_date', ''))
-            duration = self.format_duration(item.get('duration', 0))
+            track_num = i + 1
             
-            # 插入数据
+            # 确保每个item都有唯一的ID
             item_id = self.tree.insert("", "end", values=(
-                "☐", # 默认未选中
-                f"{track_num:03d}/{total_items}",
-                item['title'],
-                duration,
-                formatted_date
+                "☐",
+                track_num, 
+                item.get('title', 'N/A'), 
+                self.format_duration(item.get('duration', 0)), 
+                self.format_date(item.get('pubDate', ''))
             ))
-            self.item_states[item_id] = False # 初始化状态
-            item['item_id'] = item_id # 关联 item 和 item_id
-
-        self.update_header_checkbox_state()
+            item['id'] = item_id # 将 treeview 的 item id 存入字典
             
-    def download_selected(self):
-        selected_items_to_download = [
-            item for item in self.podcast_items if self.item_states.get(item.get('item_id'))
-        ]
+            # 初始化或恢复该项目的选中状态
+            self.item_states[item_id] = self.item_states.get(item_id, False)
+            self.update_row_checkbox(item_id)
+            
+        self.update_header_checkbox_state()
 
-        if not selected_items_to_download:
-            messagebox.showwarning("无选择", "请先选择要下载的曲目")
+        # 如果之前是全选状态，则取消它，因为列表已刷新
+        self.tree.heading("选择", text="☐")
+        self.all_selected_var.set(False)
+        
+    def download_selected(self):
+        selected_ids = [item_id for item_id, selected in self.item_states.items() if selected]
+        if not selected_ids:
+            messagebox.showinfo("提示", "请选择要下载的播客。")
             return
 
         self.stop_requested = False
         self.download_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+        self.fetch_button.configure(state="disabled")
         self.progress_bar.set(0)
         self.progress_label.configure(text="0.0%")
         
-        download_dir = self.dir_entry.get().strip()
-        if not download_dir:
-            messagebox.showerror("错误", "下载目录不能为空")
-            self.download_button.configure(state="normal")
-            self.stop_button.configure(state="disabled")
-            return
-            
-        # The path from the UI is the final destination. Create it if it doesn't exist.
-        # This prevents creating a nested folder.
-        podcast_dir = download_dir
-        os.makedirs(podcast_dir, exist_ok=True)
+        # 重置状态
+        self.total_downloads = len(selected_ids)
+        self.completed_downloads = 0
+        self.active_downloads.clear()
+        self.download_futures.clear()
+        self.file_progress.clear()
+        self.errors_occurred = False
         
-        # 为每个任务创建yt-dlp配置和URL列表
-        tasks = []
-        for i, item in enumerate(selected_items_to_download):
-            # Sanitize filename to prevent invalid characters
-            safe_item_title = re.sub(r'[\\/*?:"<>|]', "_", item['title'].strip())
-            filename = f"{safe_item_title}.mp3"
-            filepath = os.path.join(podcast_dir, filename)
-            
-            if os.path.exists(filepath):
-                self.logger.info(f"文件已存在，跳过: {filename}")
-                self.status_label.configure(text=f"已跳过: {filename}")
+        # 下载立即开始，进度条直接进入确定模式
+        self.progress_bar.configure(mode="determinate")
+
+        dir_path = self.dir_entry.get().strip()
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+
+        items_to_download = []
+        for item_id in selected_ids:
+            item = next((p for p in self.podcast_items if p.get('id') == item_id), None)
+            if item:
+                items_to_download.append(item)
+        
+        if len(items_to_download) != self.total_downloads:
+            self.logger.warning("部分选中的项目无法找到，可能已被刷新。")
+            self.total_downloads = len(items_to_download)
+
+        for item in items_to_download:
+            item_title = item.get('title', 'Unknown Title')
+            url = item.get('url')
+
+            if not url:
+                self.logger.error(f"播客 '{item_title}' 的 URL 无效。")
+                self.total_downloads -= 1
                 continue
 
             ydl_opts = {
-                'outtmpl': filepath,
                 'format': 'bestaudio/best',
-                'noplaylist': True,
+                'outtmpl': os.path.join(dir_path, f'{self.podcast_title} - {item_title}.%(ext)s'),
                 'quiet': True,
                 'no_warnings': True,
-                'no_color': True,
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                'progress_hooks': [], # 将在线程中设置
-                # 添加元数据以在钩子中识别
-                'progress_template': {'info_dict': {'item_index': i, 'total_files': len(selected_items_to_download)}}
+                'logger': self.logger,
+                'progress_hooks': [self.progress_hook],
             }
-            tasks.append({'opts': ydl_opts, 'url': item['url']})
 
-        # 启动下载线程
-        if tasks:
-            # Note: This implementation downloads files one by one in a single thread.
-            self.tasks = tasks
-            self.current_task_index = 0
-            self.start_next_download()
-        else: # 如果所有文件都已存在
-             self.download_finished(status_text="所有选定文件均已存在。")
+            future = self.download_pool.submit(self._download_task_worker, ydl_opts, url)
+            self.download_futures.append(future)
 
-    def start_next_download(self):
-        if self.current_task_index < len(self.tasks):
-            task = self.tasks[self.current_task_index]
-            self.download_thread = DownloadThread(task['opts'], [task['url']], self.download_queue)
-            self.download_thread.start()
-            self.process_queue() # 开始处理队列
-        else:
-            self.download_finished()
-            messagebox.showinfo("成功", "所有选定曲目下载完成！")
+        self.status_label.configure(text=f"已将 {self.total_downloads} 个任务加入下载队列...")
+        self.process_queue()
+
+    def _download_task_worker(self, ydl_opts, url):
+        """
+        这个方法由线程池的单个工作线程执行，负责一个文件的完整下载过程。
+        """
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+        except Exception as e:
+            # 捕获 yt_dlp 本身的异常，包括用户中止的异常
+            # progress_hook 会处理具体的状态，这里只捕获意外错误
+            if "Download cancelled by user" not in str(e):
+                 self.download_queue.put({'status': 'error', 'error': str(e), 'url': url})
+
+    def progress_hook(self, d):
+        if self.stop_requested:
+            raise yt_dlp.utils.DownloadError("Download cancelled by user.")
+
+        # 从回调信息中获取最可靠的原始URL
+        url = d.get('info_dict', {}).get('original_url') or d.get('info_dict', {}).get('webpage_url')
+        if not url: # 如果在某些情况下无法获取，则不发送消息
+            self.logger.warning(f"无法从progress_hook确定URL。状态: {d['status']}")
+            return
+
+        message = {
+            'status': d['status'],
+            'data': d,
+            'url': url
+        }
+        self.download_queue.put(message)
 
     def process_queue(self):
         try:
-            msg = self.download_queue.get_nowait()
-            
-            if msg['status'] == 'downloading':
-                data = msg['data']
-                total_bytes = data.get('total_bytes') or data.get('total_bytes_estimate', 0)
-                downloaded_bytes = data.get('downloaded_bytes', 0)
-                
-                # 从yt-dlp的模板中获取我们自己的元数据
-                item_index = self.current_task_index
-                total_files = len(self.tasks)
+            while not self.download_queue.empty():
+                msg = self.download_queue.get_nowait()
+                status = msg.get('status')
+                url = msg.get('url')
+                data = msg.get('data', {})
 
-                if total_bytes > 0:
-                    current_file_progress = downloaded_bytes / total_bytes
-                    overall_progress = (item_index + current_file_progress) / total_files
-                    self.progress_bar.set(overall_progress)
-                    self.progress_label.configure(text=f"{overall_progress:.1%}")
+                if url not in self.file_progress:
+                    self.file_progress[url] = {'percent': 0, 'downloaded_bytes': 0, 'speed': 0}
 
-                # 格式化状态文本
-                speed_str = data.get('_speed_str', '...').strip()
-                eta_str = data.get('_eta_str', '...').strip()
-                filename = data.get('filename', '').split('/')[-1]
-                if len(filename) > 35:
-                    filename = filename[:32] + '...'
+                if status == 'downloading':
+                    downloaded_bytes = data.get('downloaded_bytes', 0)
+                    total_bytes = data.get('total_bytes') or data.get('total_bytes_estimate', 0)
+                    speed = data.get('speed') or 0
 
-                status_text = f"下载中 ({item_index+1}/{total_files}) | {speed_str} | 预计剩余: {eta_str} | {filename}"
-                self.status_label.configure(text=status_text)
+                    self.file_progress[url]['downloaded_bytes'] = downloaded_bytes
+                    self.file_progress[url]['speed'] = speed
+                    if total_bytes > 0:
+                        percent = (downloaded_bytes / total_bytes) * 100
+                        self.file_progress[url]['percent'] = percent
 
-            elif msg['status'] == 'task_finished':
-                 # 单个文件下载完成，开始下一个
-                 self.current_task_index += 1
-                 self.start_next_download() # Start the next file
+                elif status == 'finished':
+                    self.completed_downloads += 1
+                    self.file_progress[url]['percent'] = 100
+                    self.file_progress[url]['speed'] = 0
                 
-            elif msg['status'] == 'cancelled':
-                self.download_finished(status_text="下载已中止")
-                
-            elif msg['status'] == 'error':
-                self.download_finished(status_text="下载失败")
-                self.logger.error(f"下载线程出错: {msg['error']}")
-                messagebox.showerror("错误", f"下载失败: {msg['error']}")
-                
+                elif status == 'error':
+                    self.errors_occurred = True
+                    self.completed_downloads += 1
+                    self.file_progress[url]['percent'] = 100 # 将失败的任务视为"完成"以推进总进度
+                    self.logger.error(f"下载失败: {msg.get('error')}")
+
+            # --- 虚拟总进度计算 ---
+            if self.total_downloads > 0:
+                # 如果有任何详细的进度数据，则使用虚拟百分比方法
+                if self.file_progress:
+                    total_percent = sum(item['percent'] for item in self.file_progress.values())
+                    overall_progress = total_percent / self.total_downloads
+                    
+                    total_downloaded_mb = sum(item['downloaded_bytes'] for item in self.file_progress.values()) / 1024 / 1024
+                    total_speed_mbps = sum(item['speed'] for item in self.file_progress.values()) / 1024 / 1024
+
+                    self.progress_bar.set(overall_progress / 100)
+                    self.progress_label.configure(text=f"{overall_progress:.1f}%")
+                    
+                    speed_text = f"{total_speed_mbps:.2f} MB/s" if total_speed_mbps > 0 else "..."
+                    status_text = f"已下载: {total_downloaded_mb:.2f} MB | 速度: {speed_text}"
+                    self.status_label.configure(text=status_text)
+                # 否则，回退到按完成数量显示进度
+                else:
+                    self.update_progress_by_count()
+
+
+            if self.completed_downloads == self.total_downloads and self.total_downloads > 0:
+                 self.download_finished()
+                 return
+
         except queue.Empty:
-            pass # 队列为空，什么都不做
-        finally:
-            # 只要线程还在运行，就继续检查
-            if self.download_thread and self.download_thread.is_alive():
-                self.after(100, self.process_queue)
+            pass
+        
+        if not self.stop_requested:
+            self.after(100, self.process_queue)
 
-    def download_finished(self, status_text=""):
-        if not status_text:
-            self.progress_bar.set(1)
-            self.progress_label.configure(text="100.0%")
-            self.status_label.configure(text="所有选定曲目下载完成！")
-        else:
-            self.status_label.configure(text=status_text)
+    def update_progress_by_count(self):
+        """按文件完成数量更新进度（作为备用）"""
+        if self.total_downloads > 0:
+            progress = (self.completed_downloads / self.total_downloads) * 100
+            self.progress_bar.set(progress / 100)
+            self.progress_label.configure(text=f"{progress:.1f}%")
+            self.status_label.configure(text="下载中...")
             
+    def download_finished(self, status_text="所有任务已完成。"):
+        self.progress_bar.stop()
+        self.progress_bar.configure(mode="determinate")
         self.download_button.configure(state="normal")
-        self.stop_button.configure(state="disabled", text="中止下载")
-        self.download_thread = None
+        self.stop_button.configure(state="disabled")
+        self.fetch_button.configure(state="normal")
+        
+        # 优先显示错误信息
+        if self.errors_occurred:
+            status_text = "下载完成，但有错误发生。"
+        
+        if status_text:
+            self.status_label.configure(text=status_text)
+        
+        self.total_downloads = 0
+        self.completed_downloads = 0
+        self.active_downloads.clear()
+        self.download_futures.clear()
 
     def stop_download(self):
-        """中止下载过程"""
-        if self.download_thread and self.download_thread.is_alive():
-            self.download_thread.stop()
-            self.stop_button.configure(state="disabled", text="正在中止...")
+        self.stop_requested = True
+        
+        # 尝试取消线程池中未开始的任务
+        for future in self.download_futures:
+            future.cancel()
+
+        # 停止正在运行的线程
+        for thread in self.active_downloads.values():
+            thread.stop()
+            
+        # 清空队列
+        while not self.download_queue.empty():
+            try:
+                self.download_queue.get_nowait()
+            except queue.Empty:
+                break
+                
+        self.download_pool.shutdown(wait=False, cancel_futures=True) # 立即关闭
+        self.download_pool = ThreadPoolExecutor(max_workers=5) # 重建线程池
+
+        self.download_finished("下载已中止。")
 
     def select_all(self):
-        """选中所有曲目并更新UI"""
-        for item_id in self.tree.get_children():
-            if not self.item_states.get(item_id, False):
-                self.item_states[item_id] = True
-                self.update_row_checkbox(item_id)
         self.all_selected_var.set(True)
         self.tree.heading("选择", text="☑")
 
